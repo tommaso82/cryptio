@@ -1,6 +1,6 @@
 # Cryptio
 
-**Cryptio** is a ZNC module that enhances secure communication by implementing Diffie-Hellman key exchange and AES-256 GCM encryption. It ensures that user messages are encrypted, providing data integrity
+**Cryptio** is a [ZNC](https://znc.in/) module that enhances secure communication by implementing Diffie-Hellman key exchange and AES-256 GCM encryption. It ensures that user messages are encrypted, providing data integrity
 
 ## Features
 
