@@ -16,8 +16,8 @@
 
 ## Usage
 Commands<br>
-'dhkey <nick>': Initiates Diffie-Hellman key exchange with the specified user (Obviously both users must have the module loaded)<br>
-'setkey <base64_key>': Manually sets an AES-256 key encoded in Base64
+`dhkey <nick>`: Initiates Diffie-Hellman key exchange with the specified user (Obviously both users must have the module loaded)<br>
+`setkey <base64_key>`: Manually sets an AES-256 key encoded in Base64
 
 ### Limitations
 Message Length: 
