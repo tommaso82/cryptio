@@ -10,9 +10,10 @@
 
 ## Installation
 
-1. put the module in ~/.znc/modules/
-2. /msg *status loadmod modpython
-3. /msg *status loadmod cryptio
+1. sudo apt-get install python3-pycryptodome (required pycryptodome package)
+2. put the module in ~/.znc/modules/
+3. /msg *status loadmod modpython
+4. /msg *status loadmod cryptio
 
 ## Usage
 Commands<br>
