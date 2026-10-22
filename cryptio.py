@@ -113,23 +113,45 @@ class cryptio(znc.Module):
         """
         try:
             other_public_key = self.decode_public_key(other_public_key_b85)
-            self.shared_key = pow(other_public_key, self.private_key, self.p)
-            self.aes_key = SHA256.new(str(self.shared_key).encode()).digest()
+            shared_key = pow(other_public_key, self.private_key, self.p)
+            aes_key = SHA256.new(str(shared_key).encode()).digest()
+
+            # Only replace the active session after the public key is validated.
+            self.shared_key = shared_key
+            self.aes_key = aes_key
 
             # Log the shared and AES keys
             self.PutModule("Key exchange completed successfully.")
             self.PutModule(f"  Shared key: {self.shared_key}")
             self.PutModule(f"  Derived AES-256 key: {self.aes_key.hex()}")
+            return True
 
         except ValueError as e:
-            self.PutModule(f"Error decoding public key: {e}")
+            self.PutModule(f"Invalid DH public key: {e}")
+            return False
 
     def decode_public_key(self, key_b85):
         """
         Decodes a public key from a Base85 string.
         """
+        # The RFC 3526 Group 14 public key is at most 256 bytes (320 Base85 chars).
+        if not 1 <= len(key_b85) <= 320:
+            raise ValueError("unexpected Base85 public key length")
+
         key_bytes = base64.b85decode(key_b85)
-        return int.from_bytes(key_bytes, byteorder='big')
+        if len(key_bytes) > 256:
+            raise ValueError("oversized DH public key")
+
+        other_public_key = int.from_bytes(key_bytes, byteorder='big')
+        if not 2 <= other_public_key <= self.p - 2:
+            raise ValueError("public key outside the DH group range")
+
+        # Group 14 is a safe-prime group; reject elements outside its order-q subgroup.
+        q = (self.p - 1) // 2
+        if pow(other_public_key, q, self.p) != 1:
+            raise ValueError("public key outside the DH subgroup")
+
+        return other_public_key
 
     def encrypt_message(self, message):
         """
@@ -177,9 +199,11 @@ class cryptio(znc.Module):
         """
         Handles incoming key exchange requests.
         """
+        if not self.calcola_chiave_condivisa_e_aes(msg.split(":", 1)[1]):
+            return
+
         public_key_b85 = self.codifica_chiave_pubblica(self.public_key)
         self.PutIRC(f"PRIVMSG {nick.GetNick()} :RESP-DH-KEY:{public_key_b85}")
-        self.calcola_chiave_condivisa_e_aes(msg.split(":")[1])
 
     def handle_key_response(self, msg):
         """
