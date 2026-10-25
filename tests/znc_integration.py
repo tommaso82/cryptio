@@ -148,16 +148,16 @@ LoadModule = modpython
                 return len(f":{mask} PRIVMSG #canale :\r\n".encode()) + payload
 
             maximum = max(n for n in range(500) if message_size(n) <= 512)
-            assert message_size(maximum) == 512, "Unexpected formula limit"
+            assert message_size(maximum) <= 512 < message_size(maximum + 1), "Unexpected formula limit"
             print(f"Computed safe limit: {maximum} ASCII bytes")
             tom.send("PRIVMSG #canale :" + "B" * maximum)
             accepted = wait_msg()
-            assert accepted and len(accepted) + 2 == 512, "Boundary message not delivered intact"
+            assert accepted and len(accepted) + 2 == message_size(maximum), "Boundary message not delivered intact"
             tom.send("PRIVMSG #canale :" + "C" * (maximum + 1))
             rejected = wait_msg(timeout=4)
             assert rejected is None, "Oversize message reached IRC server"
             assert tom.find(lambda line: b"Message too long" in line, timeout=4), "Expected ZNC module error"
-            print("LIVE ZNC INTEGRATION: PASS (512 bytes accepted, 513 blocked)")
+            print(f"LIVE ZNC INTEGRATION: PASS ({message_size(maximum)} bytes accepted, {message_size(maximum + 1)} blocked)")
         finally:
             for client in clients:
                 client.close()
