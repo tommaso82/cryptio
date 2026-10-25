@@ -12,7 +12,7 @@ class cryptio(znc.Module):
     
     module_types = [znc.CModInfo.NetworkModule]
     identifier = "!$~ENC@#"
-    max_message_length = 300  # Limit of 300 characters for outgoing messages
+    max_irc_line_length = 512
     
     def OnLoad(self, args, message):
         """
@@ -231,16 +231,24 @@ class cryptio(znc.Module):
         
         return znc.CONTINUE
 
-    def OnUserMsg(self, target, message):
-        """
-        Blocks outgoing user messages over 300 characters to account for encryption overhead. 
-        This limit is a temporary safeguard as precise overhead calculations are not yet implemented.
-        """
-        if len(message.s) > self.max_message_length:
-            self.PutModule(f"Error: Message too long ({len(message.s)} characters). Maximum is {self.max_message_length} characters.")
-            return znc.HALT  # Prevents the message from being sent
+    def irc_message_length(self, target, payload):
+        """Size of the forwarded IRC line, including the sender mask and CRLF."""
+        nick = self.GetNetwork().GetIRCNick()
+        if not (nick.GetNick() and nick.GetIdent() and nick.GetHost()):
+            return None
 
-        encrypted_message = self.encrypt_message(message.s)
-        message.s = encrypted_message
-        
+        line = f":{nick.GetNickMask()} PRIVMSG {target} :{payload}\r\n"
+        return len(line.encode('utf-8'))
+
+    def OnUserMsg(self, target, message):
+        outgoing_message = self.encrypt_message(message.s)
+        line_length = self.irc_message_length(target, outgoing_message)
+        if line_length is None:
+            self.PutModule("Error: IRC hostmask unavailable; cannot verify message length.")
+            return znc.HALT
+        if line_length > self.max_irc_line_length:
+            self.PutModule(f"Error: Message too long ({line_length} bytes, maximum {self.max_irc_line_length}).")
+            return znc.HALT
+
+        message.s = outgoing_message
         return znc.CONTINUE
