@@ -3,7 +3,7 @@ name: One-off IRCnet Cryptio live test
 on:
   push:
     branches: [test/ircnet-public-cybernet]
-    paths: [.github/workflows/ircnet-probe.yml]
+    paths: [.github/workflows/ircnet-probe.yml, tests/ircnet_live.py]
 
 jobs:
   ircnet-cryptio:
