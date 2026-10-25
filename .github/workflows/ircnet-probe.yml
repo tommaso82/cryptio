@@ -1,0 +1,65 @@
+name: One-off IRCnet connectivity test
+
+on:
+  push:
+    branches: [test/ircnet-public-cybernet]
+    paths: [.github/workflows/ircnet-probe.yml]
+
+jobs:
+  public-ircnet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - name: Connect to open.ircnet.com and join cybernet
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import os, socket, time
+          host, port, channel = 'open.ircnet.com', 6667, '#cybernet'
+          print("Resolving",host,flush=True)
+          answers=socket.getaddrinfo(host,port,type=socket.SOCK_STREAM)
+          print("Resolved addresses:",sorted({a[4][0] for a in answers}),flush=True)
+          sock=socket.create_connection((host,port),timeout=10)
+          sock.settimeout(1)
+          nick="CTio"+os.environ["RUN_ID"][-5:]
+          buffer=b""
+          def send(line):
+              sock.sendall((line+"\r\n").encode("utf-8"))
+          send("NICK "+nick)
+          send("USER ctiotest 0 * :Cryptio test connection")
+          state="connecting"
+          end=time.monotonic()+45
+          try:
+              while time.monotonic()<end:
+                  try:
+                      data=sock.recv(4096)
+                  except socket.timeout:
+                      continue
+                  if not data: break
+                  buffer+=data
+                  while b"\r\n" in buffer:
+                      raw,buffer=buffer.split(b"\r\n",1)
+                      line=raw.decode("utf-8","replace")
+                      if line.startswith("PING "):
+                          send("PONG "+line[5:])
+                      elif " 001 "+nick+" " in line:
+                          print("IRC registration OK:",line[:190],flush=True)
+                          send("JOIN "+channel)
+                          state="registered"
+                      elif ((" JOIN "+channel) in line or (" 366 "+nick+" "+channel+" ") in line) and state=="registered":
+                          print("JOIN confirmed:",line[:190],flush=True)
+                          state="joined"
+                          send("PART "+channel+" :Test finished")
+                          send("QUIT :Test finished")
+                          break
+                      elif any(f" {num} " in line for num in ("432","433","463","464","465","471","473","474","475","477","481")):
+                          print("IRC error:",line[:240],flush=True)
+                          raise RuntimeError("IRC registration/join denied")
+                  if state=="joined":break
+          finally:
+              sock.close()
+          if state!="joined":
+              raise RuntimeError("Public IRC join not confirmed (state="+state+")")
+          print("PUBLIC IRCNET CONNECTION PASS",flush=True)
+          PY
