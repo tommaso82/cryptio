@@ -1,4 +1,4 @@
-"""One-off public IRCnet integration check; no public channel messages."""
+"""One-off public IRCnet incremental encrypted channel exchange."""
 import base64
 from pathlib import Path
 import os
@@ -127,76 +127,95 @@ LoadModule = modpython
             client.send("USER testuser 0 * :Test")
             client.read_until(lambda x: b" 001 " in x)
             client.send("JOIN " + CHANNEL)
-            receiver.read_until(lambda x: x.startswith(b":" + sender.encode() + b"!") and (b" JOIN :" + CHANNEL.encode() in x or b" JOIN " + CHANNEL.encode() in x))
+            sender_join = receiver.read_until(lambda x: x.startswith(b":" + sender.encode() + b"!") and (b" JOIN :" + CHANNEL.encode() in x or b" JOIN " + CHANNEL.encode() in x))
             print("ZNC connected to public IRCnet; sender joined", CHANNEL, flush=True)
 
             key = b"0" * 32
             client.send("PRIVMSG *cryptio :setkey " + base64.b64encode(key).decode())
             client.read_until(lambda x: b"New AES-256 key successfully set." in x)
 
+            join_mask = sender_join.split(b" ", 1)[0][1:].decode()
+            print("Sender hostmask observed on IRCnet:", join_mask, flush=True)
+
+            def predicted_length(n):
+                b85 = (5 * (32 + n) + 3) // 4
+                return len(f":{join_mask} PRIVMSG {CHANNEL} :\r\n".encode()) + 8 + b85
+
+            predicted_max = max(n for n in range(450) if predicted_length(n) <= 512)
+            print("Predicted channel limit:", predicted_max, "UTF-8 bytes", flush=True)
+
             def from_sender(line):
                 return (line.startswith(b":" + sender.encode() + b"!")
-                        and b" PRIVMSG " + recipient.encode() + b" :!$~ENC@#" in line)
+                        and b" PRIVMSG " + CHANNEL.encode() + b" :!$~ENC@#" in line)
 
-            def receive_decrypted():
-                line = receiver.read_until(from_sender, 25)
-                payload = line.split(b" :", 1)[1].decode()
-                raw = base64.b85decode(payload[8:])
-                plain = AES.new(key, AES.MODE_GCM, nonce=raw[:16]).decrypt_and_verify(raw[32:], raw[16:32])
-                return line, plain.decode("utf-8")
+            def decrypt_wire(line):
+                data = line.split(b" :", 1)[1].decode("ascii")
+                assert data.startswith("!$~ENC@#")
+                raw = base64.b85decode(data[8:])
+                return AES.new(key, AES.MODE_GCM, nonce=raw[:16]).decrypt_and_verify(
+                    raw[32:], raw[16:32]).decode("utf-8")
 
-            channel_text = "Cryptio IRCnet live test " + os.environ["GITHUB_RUN_ID"][-5:]
-            client.send("PRIVMSG " + CHANNEL + " :" + channel_text)
-            try:
-                channel_line = receiver.read_until(
-                    lambda x: x.startswith(b":" + sender.encode() + b"!")
-                    and b" PRIVMSG " + CHANNEL.encode() + b" :!$~ENC@#" in x, 20
-                )
-                channel_payload = channel_line.split(b" :", 1)[1].decode()
-                raw = base64.b85decode(channel_payload[8:])
-                decoded = AES.new(key, AES.MODE_GCM, nonce=raw[:16]).decrypt_and_verify(raw[32:], raw[16:32])
-                assert decoded.decode("utf-8") == channel_text, "Channel decryption mismatch"
-                print("PUBLIC CHANNEL CRYPTIO PASS:", CHANNEL,
-                      "received", len(channel_line) + 2, "bytes", flush=True)
-            except AssertionError as exc:
-                print("CHANNEL TEST NOT CONFIRMED:", str(exc)[:400], flush=True)
+            def encrypt_wire(text):
+                cipher = AES.new(key, AES.MODE_GCM)
+                ciphertext, tag = cipher.encrypt_and_digest(text.encode("utf-8"))
+                return "!$~ENC@#" + base64.b85encode(cipher.nonce + tag + ciphertext).decode("ascii")
 
-            probe_text = "A" * 300
-            client.send("PRIVMSG " + recipient + " :" + probe_text)
-            try:
-                probe_line, decrypted = receive_decrypted()
-            except AssertionError:
-                print("ZNC client last messages:", repr(client.messages[-12:]), flush=True)
-                raise
-            assert decrypted == probe_text
-            mask = probe_line.split(b" ", 1)[0][1:].decode()
-            print("Observed IRCnet sender mask:", mask, flush=True)
+            # A reciprocal encrypted message tests Cryptio's incoming OnChanMsg.
+            welcome = f"ACK:IRCnet:{os.environ['GITHUB_RUN_ID'][-5:]}"
+            receiver.send(f"PRIVMSG {CHANNEL} :{encrypt_wire(welcome)}")
+            incoming = client.read_until(
+                lambda line: line.startswith(b":" + recipient.encode() + b"!")
+                and b" PRIVMSG " + CHANNEL.encode() + b" :" + welcome.encode() in line, 25)
+            assert welcome.encode() in incoming
+            print("Peer -> Cryptio: public channel decryption verified", flush=True)
 
-            def outgoing_line_length(n):
-                base85_length = (5 * (32 + n) + 3) // 4
-                return len(f":{mask} PRIVMSG {recipient} :\r\n".encode()) + 8 + base85_length
+            sizes = sorted(set([max(1, predicted_max - 24),
+                                predicted_max - 12, predicted_max - 6,
+                                predicted_max - 3, predicted_max,
+                                predicted_max + 1]))
+            delivered = 0
+            blocked = False
+            for n in sizes:
+                header = f"Cryptio IRCnet incremental test {n:03d}:"
+                plaintext = header + "X" * (n - len(header))
+                assert len(plaintext.encode("utf-8")) == n
+                client.send(f"PRIVMSG {CHANNEL} :{plaintext}")
+                if n > predicted_max:
+                    error = client.read_until(lambda line: b"Error: Message too long" in line, 15)
+                    print(f"Cryptio rejected {n} UTF-8 bytes: predicted {predicted_length(n)} IRC bytes", flush=True)
+                    print("Module response:", error.decode(errors="replace")[:200], flush=True)
+                    try:
+                        receiver.read_until(from_sender, 4)
+                    except AssertionError as exc:
+                        if not str(exc).startswith("Timeout:"):
+                            raise
+                    else:
+                        raise AssertionError("Rejected oversized channel message reached another client")
+                    blocked = True
+                    break
 
-            maximum = max(n for n in range(450) if outgoing_line_length(n) <= 512)
-            print("Calculated maximum ASCII bytes:", maximum, flush=True)
-            accepted_text = "B" * maximum
-            client.send("PRIVMSG " + recipient + " :" + accepted_text)
-            accepted, plaintext = receive_decrypted()
-            assert plaintext == accepted_text, "Decrypted boundary message differed"
-            assert len(accepted) + 2 == outgoing_line_length(maximum), "Unexpected IRC length"
-            print("Accepted forwarded IRC line:", len(accepted) + 2, "bytes", flush=True)
+                wire_line = receiver.read_until(from_sender, 30)
+                decrypted = decrypt_wire(wire_line)
+                assert decrypted == plaintext, f"Message failed roundtrip at {n} bytes"
+                actual = len(wire_line) + 2
+                assert actual == predicted_length(n), f"Wire length mismatch at {n}: {actual}"
+                assert actual <= 512
+                print(f"Cryptio -> peer: {n} plaintext bytes, {actual} IRC bytes, AES-GCM OK", flush=True)
+                delivered += 1
 
-            client.send("PRIVMSG " + recipient + " :" + "C" * (maximum + 1))
-            client.read_until(lambda x: b"Error: Message too long" in x, 15)
-            # No message may arrive after rejection. Test the recipient socket independently.
-            receiver.sock.settimeout(1)
-            try:
-                next_line = receiver.read_until(from_sender, 4)
-                raise AssertionError("Oversize encrypted PRIVMSG reached public IRC: " + repr(next_line[:60]))
-            except AssertionError as error:
-                if not str(error).startswith("Timeout:"):
-                    raise
-            print("Rejected oversize message:", outgoing_line_length(maximum + 1), "bytes", flush=True)
-            print("PUBLIC IRCNET CRYPTIO END-TO-END PASS", flush=True)
+                # Each accepted public message receives a cryptographic reply.
+                ack = f"ACK:{n}:{os.environ['GITHUB_RUN_ID'][-5:]}"
+                receiver.send(f"PRIVMSG {CHANNEL} :{encrypt_wire(ack)}")
+                client.read_until(
+                    lambda line: line.startswith(b":" + recipient.encode() + b"!")
+                    and b" PRIVMSG " + CHANNEL.encode() + b" :" + ack.encode() in line, 25)
+                print(f"Peer -> Cryptio: channel ACK for {n} bytes decrypted", flush=True)
+                time.sleep(4)  # avoid triggering IRCnet flood protection
+
+            assert blocked and delivered >= 3, "No message-length error after incremental steps"
+            assert predicted_length(sizes[-2]) <= 512 < predicted_length(sizes[-1])
+            print("PUBLIC IRCNET INCREMENTAL CHANNEL TEST PASS:", delivered,
+                  "received + decrypted, one oversized rejected, reciprocal ACKs confirmed", flush=True)
         finally:
             for client in clients:
                 client.close()
