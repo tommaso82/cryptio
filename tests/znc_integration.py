@@ -67,6 +67,7 @@ Ports = {SERVER_PORT}
 [Options]
 DNS = no
 Ident = no
+PAM = no
 """)
         zhome = base / "znc"
         (zhome / "configs").mkdir(parents=True)
