@@ -176,6 +176,18 @@ LoadModule = modpython
                 if not str(error).startswith("Timeout:"):
                     raise
             print("Rejected oversize message:", outgoing_line_length(maximum + 1), "bytes", flush=True)
+            channel_text = "Cryptio IRCnet live test " + os.environ["GITHUB_RUN_ID"][-5:]
+            client.send("PRIVMSG " + CHANNEL + " :" + channel_text)
+            channel_line = receiver.read_until(
+                lambda x: x.startswith(b":" + sender.encode() + b"!")
+                and b" PRIVMSG " + CHANNEL.encode() + b" :!$~ENC@#" in x, 25
+            )
+            channel_payload = channel_line.split(b" :", 1)[1].decode()
+            raw = base64.b85decode(channel_payload[8:])
+            decoded = AES.new(key, AES.MODE_GCM, nonce=raw[:16]).decrypt_and_verify(raw[32:], raw[16:32])
+            assert decoded.decode("utf-8") == channel_text, "Channel message failed decryption"
+            print("PUBLIC CHANNEL CRYPTIO PASS:", CHANNEL,
+                  "received", len(channel_line) + 2, "bytes", flush=True)
             print("PUBLIC IRCNET CRYPTIO END-TO-END PASS", flush=True)
         finally:
             for client in clients:
