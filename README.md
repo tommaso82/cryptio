@@ -6,7 +6,7 @@
 
 - **Diffie-Hellman Key Exchange**: Securely exchanges keys with other users to establish a shared secret.
 - **AES-256 GCM Encryption**: Encrypts messages using AES-256 in Galois/Counter Mode (GCM) for both confidentiality and data integrity.
-- **Message Length Limit**: Automatically blocks outgoing messages longer than 300 characters to account for encryption overhead.
+- **IRC Message Length**: Checks the complete IRC line after encryption and blocks messages exceeding 512 bytes.
 
 ## Installation
 
@@ -21,7 +21,6 @@ Commands<br>
 `setkey <base64_key>`: Manually sets an AES-256 key encoded in Base64
 
 ### Limitations
-Message Length: 
-Messages longer than 300 characters are blocked to avoid issues with encryption overhead. Future versions may implement a more precise calculation.
+Messages are not fragmented. If ZNC cannot determine its own IRC hostmask, outgoing messages are blocked rather than risking an incorrect length calculation.
 
 
