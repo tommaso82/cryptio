@@ -61,7 +61,10 @@ class MessageLengthTests(unittest.TestCase):
         self.assertEqual(result, expected)
         if expected == znc.CONTINUE:
             self.assertLessEqual(self.module.irc_message_length(target, message.s), 512)
-            self.assertEqual(self.module.decrypt_message(message.s[len(self.module.identifier):]), text)
+            if self.module.aes_key is None:
+                self.assertEqual(message.s, text)
+            else:
+                self.assertEqual(self.module.decrypt_message(message.s[len(self.module.identifier):]), text)
         else:
             self.assertEqual(message.s, text)
         return message
