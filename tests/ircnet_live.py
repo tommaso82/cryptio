@@ -127,7 +127,7 @@ LoadModule = modpython
             client.send("USER testuser 0 * :Test")
             client.read_until(lambda x: b" 001 " in x)
             client.send("JOIN " + CHANNEL)
-            receiver.read_until(lambda x: x.startswith(b":" + sender.encode() + b"!") and b" JOIN " + CHANNEL.encode() in x)
+            receiver.read_until(lambda x: x.startswith(b":" + sender.encode() + b"!") and (b" JOIN :" + CHANNEL.encode() in x or b" JOIN " + CHANNEL.encode() in x))
             print("ZNC connected to public IRCnet; sender joined", CHANNEL, flush=True)
 
             key = b"0" * 32
